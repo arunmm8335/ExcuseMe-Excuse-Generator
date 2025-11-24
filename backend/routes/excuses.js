@@ -4,6 +4,9 @@ const getOpenAIClient = require('../middleware/aiClient'); // Import the new cen
 const Excuse = require('../models/Excuse');
 const router = express.Router();
 const { validateComment, handleValidationErrors } = require('../middleware/validation');
+const { extractUserIdFromToken } = require('../utils/jwtUtils');
+const { getChatFormatPrompt } = require('../utils/chatFormats');
+const { toggleLike, toggleDislike } = require('../utils/reactionHelpers');
 
 
 // @route   POST /api/excuses/generate-stream
@@ -130,13 +133,7 @@ router.post('/proof', [auth, getOpenAIClient], async (req, res) => {
     const meName = senderName && senderName.trim() ? senderName.trim() : 'Me';
     const otherName = receiverName && receiverName.trim() ? receiverName.trim() : 'Mom';
 
-    let stylePrompt = '';
-    if (platform === 'whatsapp') stylePrompt = `Format as a WhatsApp chat between '${meName}' and '${otherName}'. Each line must be: Speaker: Message text. Make the conversation sound natural and realistic, as if two real people are chatting. Do not include timestamps or line numbers. Do not add any extra commentary.`;
-    else if (platform === 'messenger') stylePrompt = `Format as a Messenger chat between '${meName}' and '${otherName}'. Each line must be: Speaker: Message text. Make the conversation sound natural and realistic, as if two real people are chatting. Do not include timestamps or line numbers. Do not add any extra commentary.`;
-    else if (platform === 'sms') stylePrompt = `Format as an SMS between '${meName}' and '${otherName}'. Each line must be: Speaker: Message text. Make the conversation sound natural and realistic, as if two real people are chatting. Do not include timestamps or line numbers. Do not add any extra commentary.`;
-    else if (platform === 'telegram') stylePrompt = `Format as a Telegram chat between '${meName}' and '${otherName}'. Each line must be: Speaker: Message text. Make the conversation sound natural and realistic, as if two real people are chatting. Do not include timestamps or line numbers. Do not add any extra commentary.`;
-    else if (platform === 'instagram') stylePrompt = `Format as an Instagram DM chat between '${meName}' and '${otherName}'. Each line must be: Speaker: Message text. Make the conversation sound natural and realistic, as if two real people are chatting. Do not include timestamps or line numbers. Do not add any extra commentary.`;
-    else stylePrompt = `Format as a generic chat between '${meName}' and '${otherName}'. Each line must be: Speaker: Message text. Make the conversation sound natural and realistic, as if two real people are chatting. Do not include timestamps or line numbers. Do not add any extra commentary.`;
+    const stylePrompt = getChatFormatPrompt(platform, meName, otherName);
 
     const systemPrompt = `You are a scriptwriter. Create a short, realistic chat (3-5 lines) between '${meName}' and '${otherName}' that supports an excuse. ${stylePrompt} Generate the dialogue in ${language || 'English'}.`;
     const userPrompt = `The situation: "${scenario}". The excuse used: "${excuseText}". Write a fake chat log for this.`;
@@ -327,26 +324,9 @@ router.post('/:id/like', auth, async (req, res) => {
         if (!excuse || !excuse.isPublic || excuse.status !== 'active') {
             return res.status(404).json({ msg: 'Excuse not found or not public.' });
         }
-        const userId = req.user.id;
-        // Remove from dislikedBy if present
-        excuse.dislikedBy = excuse.dislikedBy.filter(id => id.toString() !== userId);
-        const liked = excuse.likedBy.map(id => id.toString()).includes(userId);
-        if (liked) {
-            // Undo like
-            excuse.likedBy = excuse.likedBy.filter(id => id.toString() !== userId);
-        } else {
-            // Add to likedBy if not present
-            excuse.likedBy.push(userId);
-        }
-        // Ensure no duplicates
-        excuse.likedBy = [...new Set(excuse.likedBy.map(id => id.toString()))].map(id => excuse.likedBy.find(objId => objId.toString() === id));
+        const result = toggleLike(excuse, req.user.id);
         await excuse.save();
-        res.json({
-            likes: excuse.likedBy.length,
-            dislikes: excuse.dislikedBy.length,
-            userLike: !liked,
-            userDislike: false
-        });
+        res.json(result);
     } catch (err) {
         res.status(500).json({ msg: 'Server error liking excuse.' });
     }
@@ -359,26 +339,9 @@ router.post('/:id/dislike', auth, async (req, res) => {
         if (!excuse || !excuse.isPublic || excuse.status !== 'active') {
             return res.status(404).json({ msg: 'Excuse not found or not public.' });
         }
-        const userId = req.user.id;
-        // Remove from likedBy if present
-        excuse.likedBy = excuse.likedBy.filter(id => id.toString() !== userId);
-        const disliked = excuse.dislikedBy.map(id => id.toString()).includes(userId);
-        if (disliked) {
-            // Undo dislike
-            excuse.dislikedBy = excuse.dislikedBy.filter(id => id.toString() !== userId);
-        } else {
-            // Add to dislikedBy if not present
-            excuse.dislikedBy.push(userId);
-        }
-        // Ensure no duplicates
-        excuse.dislikedBy = [...new Set(excuse.dislikedBy.map(id => id.toString()))].map(id => excuse.dislikedBy.find(objId => objId.toString() === id));
+        const result = toggleDislike(excuse, req.user.id);
         await excuse.save();
-        res.json({
-            likes: excuse.likedBy.length,
-            dislikes: excuse.dislikedBy.length,
-            userLike: false,
-            userDislike: !disliked
-        });
+        res.json(result);
     } catch (err) {
         res.status(500).json({ msg: 'Server error disliking excuse.' });
     }
@@ -498,11 +461,7 @@ router.get('/trending', async (req, res) => {
         // Try to get userId from token if present
         let userId = null;
         if (req.headers['x-auth-token']) {
-            try {
-                const jwt = require('jsonwebtoken');
-                const decoded = jwt.verify(req.headers['x-auth-token'], process.env.JWT_SECRET);
-                userId = decoded.id;
-            } catch { }
+            userId = extractUserIdFromToken(req.headers['x-auth-token']);
         }
 
         res.json({ trending: trending.map(e => addLikeDislikeInfo(e, userId)) });
