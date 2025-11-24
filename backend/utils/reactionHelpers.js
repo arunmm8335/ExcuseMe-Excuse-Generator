@@ -18,10 +18,16 @@ const toggleLike = (excuse, userId) => {
         excuse.likedBy.push(userId);
     }
     
-    // Ensure no duplicates
-    excuse.likedBy = [...new Set(excuse.likedBy.map(id => id.toString()))].map(id => 
-        excuse.likedBy.find(objId => objId.toString() === id)
-    );
+    // Ensure no duplicates - convert to Set of strings, then back to unique ObjectIds
+    const uniqueIds = new Set(excuse.likedBy.map(id => id.toString()));
+    excuse.likedBy = excuse.likedBy.filter(id => {
+        const strId = id.toString();
+        if (uniqueIds.has(strId)) {
+            uniqueIds.delete(strId);
+            return true;
+        }
+        return false;
+    });
     
     return {
         likes: excuse.likedBy.length,
@@ -51,10 +57,16 @@ const toggleDislike = (excuse, userId) => {
         excuse.dislikedBy.push(userId);
     }
     
-    // Ensure no duplicates
-    excuse.dislikedBy = [...new Set(excuse.dislikedBy.map(id => id.toString()))].map(id => 
-        excuse.dislikedBy.find(objId => objId.toString() === id)
-    );
+    // Ensure no duplicates - convert to Set of strings, then back to unique ObjectIds
+    const uniqueIds = new Set(excuse.dislikedBy.map(id => id.toString()));
+    excuse.dislikedBy = excuse.dislikedBy.filter(id => {
+        const strId = id.toString();
+        if (uniqueIds.has(strId)) {
+            uniqueIds.delete(strId);
+            return true;
+        }
+        return false;
+    });
     
     return {
         likes: excuse.likedBy.length,
